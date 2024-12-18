@@ -1,8 +1,4 @@
 
-###### BIKE SHARE KAGGLE PROJECT - STAT 348 #####
-
-# packages ----------------------------------------------------------------
-
 library(tidyverse)
 library(tidymodels)
 library(vroom)
@@ -19,7 +15,6 @@ library(dbarts)
 
 bike_train <- vroom("train.csv")
 bike_test <-vroom("test.csv")
-
 
 # EDA ---------------------------------------------------------------------
 
@@ -47,7 +42,7 @@ plot_4 <- ggplot(average_counts, aes(x = weather, y = count)) +
 save <- (plot_1 + plot_2) / (plot_3 + plot_4)
 
 
-# data wrangling ----------------------------------------------------------
+# recipe ----------------------------------------------------------
 
 bike_train1 <- bike_train %>% 
   select(-c(casual, registered)) %>% 
@@ -72,98 +67,140 @@ bake(prepped_recipe, new_data=bike_test) #do i need to prep this? or only the tr
 bake(prepped_recipe, new_data=bike_train1)
 
 
-# modeling ---------------------------------------------------------------
-
-# basic linear regression (homework 4)
+# linear regression -------------------------------------------------------
 
 linear_model <- linear_reg() %>% 
   set_engine("lm") %>% 
   set_mode("regression")
 
-# %>% fit(formula = count ~ ., data = bike_train1) # add this onto the linear_model when not doing a recipe (fit is already in the recipe)
+bike_workflow <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(linear_model) %>% 
+  fit(data = bike_train1)
 
-# poisson regression (homework 5)
+preds <- predict(bike_workflow, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
+
+vroom_write(x = preds, file="./BikePreds.csv", delim=",")
+
+
+# poisson regression ------------------------------------------------------
 
 poisson_model <- poisson_reg() %>% 
   set_engine("glm") %>% 
   set_mode("regression")
 
-# %>% fit(formula = count ~ ., data = bike_train1) # add this onto the poisson_model when not doing a recipe (fit is already in the recipe)
+bike_workflow <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(poisson_model) %>% 
+  fit(data = bike_train)
 
-# penalized regression (homework 7)
+preds <- predict(bike_workflow, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
+
+vroom_write(x = preds, file="./BikePreds.csv", delim=",")
+
+
+# penalized regression ----------------------------------------------------
 
 penalized_model <- linear_reg(penalty = 0, mixture = 1) %>% 
   set_engine("glmnet")
 
-tuned_penalized_model <- linear_reg(penalty = tune(), mixture = tune()) %>% 
-  set_engine("glmnet")
+bike_workflow <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(penalized_model) %>% 
+  fit(data = bike_train)
 
-# decision trees (homework 8)
+preds <- predict(bike_workflow, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
 
-tuned_decision_tree_model <- decision_tree(tree_depth = tune(), min_n = tune()) %>%
+vroom_write(x = preds, file="./BikePreds.csv", delim=",")
+
+
+# decision trees ----------------------------------------------------------
+
+decision_tree_model <- decision_tree(tree_depth = 5, min_n = 5) %>%
   set_engine("rpart") %>% 
   set_mode("regression")
 
-# random forest (homework 9)
+bike_workflow <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(decision_tree_model) %>% 
+  fit(data = bike_train)
 
-random_forest_model <- rand_forest(mtry = 30, min_n= 100, trees=100) %>%
+preds <- predict(bike_workflow, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
+
+vroom_write(x = preds, file="./BikePreds.csv", delim=",")
+
+
+# random forest -----------------------------------------------------------
+
+rf_model <- rand_forest(mtry = 30, min_n= 100, trees=100) %>%
   set_engine("ranger") %>%
   set_mode("regression")
 
-tuned_random_forest_model <- rand_forest(mtry = tune(), min_n = tune(), trees = 500) %>%
-  set_engine("ranger") %>%
-  set_mode("regression") # not working
+bike_workflow <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(rf_model) %>% 
+  fit(data = bike_train)
 
+preds <- predict(bike_workflow, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
+
+vroom_write(x=preds, file="./bikerfpreds.csv", delim=",")
+
+
+# BART --------------------------------------------------------------------
 
 BART_model <- parsnip::bart(trees = 100) %>% 
   set_engine("dbarts") %>% 
   set_mode("regression")
 
-# which packages do i need for each of these?
-# why do we not need to add set_mode() for the penalized regression?
-
-
-# workflows (homework 6) --------------------------------------------------
-
-bike_workflow <- workflow() %>% 
+BART_wf <- workflow() %>% 
   add_recipe(my_recipe) %>% 
   add_model(BART_model) %>% 
-  fit(data = bike_train1)
+  fit(data = bike_train)
 
+preds <- predict(BART_wf, new_data = bike_test) %>% 
+  mutate(.preds = exp(.preds)) %>% 
+  bind_cols(.,bike_test) %>% 
+  select(datetime,.pred) %>% 
+  rename(count= .pred) %>% 
+  mutate(count = pmax(0,count)) %>% 
+  mutate(datetime= as.character(format(datetime)))
 
-# cross-validation and tuning ---------------------------------------------
-
-preg_wf <- workflow() %>%
-  add_recipe(my_recipe) %>%
-  add_model(tuned_random_forest_model)
-
-grid_of_tuning_params <- grid_regular(penalty(), mixture(), levels = 10) # don't understand how it's getting these numbers, why not random?
-grid_of_tuning_params <- grid_regular(mtry(), min_n(), levels = 5)
-
-folds <- vfold_cv(bike_train1, v = 5, repeats=1)
-
-CV_results <- preg_wf %>%
-  tune_grid(resamples=folds,
-            grid=grid_of_tuning_params,
-            metrics=metric_set(rmse, mae, rsq)) # this is producing an error
-
-# collect_metrics(CV_results) %>%
-#   filter(.metric=="rmse") %>%
-#   ggplot(data=., aes(x=penalty, y=mean, color=factor(mixture))) +
-#   geom_line()
-
-bestTune <- CV_results %>%
-  select_best(metric = "rmse") # not working
-
-final_wf <- preg_wf %>% 
-  finalize_workflow(bestTune) %>%
-  fit(data=bike_train1)
-
-final_wf %>%
-  predict(new_data = bike_train1)
+vroom_write(x=preds, file="./bartpreds.csv", delim=",")
 
 
 # stacking ----------------------------------------------------------------
+
+# really messy, just pasted all the code I used, lots out of order
 
 folds <- vfold_cv(bike_train1, v = 5, repeats=1)
 
@@ -180,8 +217,6 @@ preg_wf <- workflow() %>%
 preg_tuning_grid <- grid_regular(penalty(),
                                  mixture(),
                                  levels = 5)
-
-# page 2
 
 preg_models <- preg_wf %>%
   tune_grid(resamples=folds,
@@ -212,45 +247,6 @@ stackData <- as_tibble(my_stack)
 stack_mod %>%
   predict(new_data=my_new_data)
 
-
-# predicting --------------------------------------------------------------
-
-bike_predictions_log <- predict(bike_workflow, new_data = bike_test)
-
-bike_predictions <- exp(bike_predictions_log)
-
-
-# creating final submission -----------------------------------------------
-
-kaggle_submission <- bike_predictions %>%
-  bind_cols(., bike_test) %>%
-  select(datetime, .pred) %>%
-  rename(count=.pred) %>%
-  mutate(count=pmax(0, count)) %>%
-  mutate(datetime=as.character(format(datetime)))
-
-vroom_write(x=kaggle_submission, file="./Preds_BARTfinal2.csv", delim=",")
-
-
-
-# questions ---------------------------------------------------------------
-
-# so is the number of folds a hyperparameter?
-# what is the difference between selecting hyperparamters and selecting penalty coeficcients?
-# so after you do cv, do you average the coeficcients? how does that work?
-
-
-
-
-
-
-
-
-# stack stuff not sure how this works -------------------------------------
-
-
-
-
 stack_wf <- workflow() %>% 
   add_model(linear_model) %>% 
   add_recipe(my_recipe)
@@ -262,9 +258,6 @@ stack_wf2 <- workflow() %>%
 stack_wf3 <- workflow() %>% 
   add_model(random_forest_model) %>% 
   add_recipe(my_recipe)
-
-
-
 
 lin_model <- fit_resamples(stack_wf,
                            resamples = folds,
@@ -304,4 +297,5 @@ kaggle_submission <- stack_preds %>%
   mutate(datetime=as.character(format(datetime)))
 
 vroom_write(x=kaggle_submission, file="./Preds_stack.csv", delim=",")
+
 
